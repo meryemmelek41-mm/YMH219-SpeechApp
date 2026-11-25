@@ -1,277 +1,262 @@
 using System;
-using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
 
 namespace SpeechApp
 {
-    /// <summary>
-    /// Speech-to-Text ve Text-to-Speech ana kullanıcı arayüzü formu.
-    /// Konuşma sentezleme (TTS) ve tanıma (STT) servislerini nesne tabanlı mimari ile yönetir.
-    /// </summary>
     public partial class FormMain : Form
     {
-        private readonly SpeechSynthesisService _ttsService;
-        private readonly SpeechRecognitionService _sttService;
+        private SpeechSynthesisService _tts;
+        private SpeechRecognitionService _stt;
+        private bool _isPaused = false;
 
         public FormMain()
         {
             InitializeComponent();
-
-            _ttsService = new SpeechSynthesisService();
-            _sttService = new SpeechRecognitionService();
-
-            WireTTSEvents();
-            WireSTTEvents();
-            WireUIControls();
-
-            PopulateVoices();
+            InitializeServices();
+            WireEvents();
         }
 
-        #region Text-to-Speech (TTS) Olayları
-
-        private void WireTTSEvents()
+        private void InitializeServices()
         {
-            _ttsService.OnStateChanged += state => SafeInvoke(() =>
+            // TTS Service
+            _tts = new SpeechSynthesisService();
+            _tts.OnStateChanged += (state) => UpdateTTSStatus(state);
+
+            // Load voices into ComboBox
+            var voices = _tts.GetInstalledVoices();
+            cmbVoice.Items.AddRange(voices.ToArray());
+            if (cmbVoice.Items.Count > 0)
+                cmbVoice.SelectedIndex = 0;
+
+            // Apply initial rate/volume
+            _tts.SetRate(trkRate.Value);
+            _tts.SetVolume(trkVolume.Value);
+
+            // STT Service
+            _stt = new SpeechRecognitionService();
+            _stt.OnSpeechRecognized += (model) =>
             {
-                switch (state)
-                {
-                    case SynthesisState.Speaking:
-                        lblTTSStatus.BackColor = Color.FromArgb(46, 204, 113); // Yeşil
-                        lblTTSStatus.Text = "🔊 SESLENDİRİLİYOR...";
-                        btnTTSSpeak.Enabled = false;
-                        btnTTSPauseResume.Enabled = true;
-                        btnTTSPauseResume.Text = "⏸ Duraklat";
-                        btnTTSStop.Enabled = true;
-                        break;
-
-                    case SynthesisState.Paused:
-                        lblTTSStatus.BackColor = Color.FromArgb(243, 156, 18); // Turuncu
-                        lblTTSStatus.Text = "⏸ DURAKLATILDI";
-                        btnTTSSpeak.Enabled = false;
-                        btnTTSPauseResume.Enabled = true;
-                        btnTTSPauseResume.Text = "▶ Devam Et";
-                        btnTTSStop.Enabled = true;
-                        break;
-
-                    case SynthesisState.Ready:
-                    default:
-                        lblTTSStatus.BackColor = Color.FromArgb(108, 117, 125); // Gri
-                        lblTTSStatus.Text = "⏹ HAZIR";
-                        btnTTSSpeak.Enabled = true;
-                        btnTTSPauseResume.Enabled = false;
-                        btnTTSPauseResume.Text = "⏸ Duraklat / Devam";
-                        btnTTSStop.Enabled = false;
-                        break;
-                }
-            });
-
-            _ttsService.OnError += error => SafeInvoke(() =>
-            {
-                MessageBox.Show(error, "Seslendirme Hatası", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            });
-        }
-
-        private void PopulateVoices()
-        {
-            try
-            {
-                var voices = _ttsService.GetInstalledVoices();
-                cmbVoices.Items.Clear();
-                foreach (var voice in voices)
-                {
-                    cmbVoices.Items.Add(voice);
-                }
-
-                if (cmbVoices.Items.Count > 0)
-                {
-                    cmbVoices.SelectedIndex = 0;
-                }
-            }
-            catch { }
-        }
-
-        #endregion
-
-        #region Speech-to-Text (STT) Olayları
-
-        private void WireSTTEvents()
-        {
-            _sttService.OnListeningStateChanged += isListening => SafeInvoke(() =>
-            {
-                if (isListening)
-                {
-                    lblSTTStatus.BackColor = Color.FromArgb(231, 76, 60); // Kırmızı
-                    lblSTTStatus.Text = "🔴 MİKROFON DİNLİYOR...";
-                    btnSTTStart.Enabled = false;
-                    btnSTTStop.Enabled = true;
-                }
+                if (InvokeRequired)
+                    Invoke(new Action(() => OnSpeechRecognized(model)));
                 else
-                {
-                    lblSTTStatus.BackColor = Color.FromArgb(108, 117, 125); // Gri
-                    lblSTTStatus.Text = "⚪ DİNLEME KAPALI";
-                    btnSTTStart.Enabled = true;
-                    btnSTTStop.Enabled = false;
-                }
-            });
-
-            _sttService.OnSpeechRecognized += model => SafeInvoke(() =>
+                    OnSpeechRecognized(model);
+            };
+            _stt.OnSpeechHypothesized += (text) =>
             {
-                // Metin kutusuna ekle
-                if (txtSTTResult.Text.Length > 0)
-                    txtSTTResult.AppendText(" ");
-                txtSTTResult.AppendText(model.RecognizedText);
-
-                // Geçmiş listesine ekle (Bonus)
-                lstRecognitionHistory.Items.Add(model.ToString());
-                lstRecognitionHistory.TopIndex = lstRecognitionHistory.Items.Count - 1;
-            });
-
-            _sttService.OnError += error => SafeInvoke(() =>
+                if (InvokeRequired)
+                    Invoke(new Action(() => lblLiveText.Text = $"🔈 Algılanan: {text}"));
+                else
+                    lblLiveText.Text = $"🔈 Algılanan: {text}";
+            };
+            _stt.OnError += (msg) =>
             {
-                MessageBox.Show(error, "Mikrofon / Tanıma Hatası", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            });
+                if (InvokeRequired)
+                    Invoke(new Action(() => MessageBox.Show(msg, "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error)));
+                else
+                    MessageBox.Show(msg, "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            };
+            _stt.OnStateChanged += (state) =>
+            {
+                if (InvokeRequired)
+                    Invoke(new Action(() => UpdateSTTStatus(state)));
+                else
+                    UpdateSTTStatus(state);
+            };
         }
 
-        #endregion
-
-        #region UI Kontrol Olayları
-
-        private void WireUIControls()
+        private void WireEvents()
         {
-            // TTS Butonları
-            btnTTSSpeak.Click += (s, e) =>
+            // TTS buttons
+            btnSpeak.Click += BtnSpeak_Click;
+            btnPause.Click += BtnPause_Click;
+            btnStop.Click += BtnStop_Click;
+
+            // Track bars
+            trkRate.ValueChanged += (s, e) =>
             {
-                var text = txtTTSInput.Text.Trim();
-                if (string.IsNullOrEmpty(text))
-                {
-                    MessageBox.Show("Lütfen seslendirilecek bir metin yazın!", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return;
-                }
-                _ttsService.SpeakAsync(text);
+                lblRateVal.Text = trkRate.Value.ToString();
+                _tts.SetRate(trkRate.Value);
+            };
+            trkVolume.ValueChanged += (s, e) =>
+            {
+                lblVolumeVal.Text = trkVolume.Value.ToString();
+                _tts.SetVolume(trkVolume.Value);
             };
 
-            btnTTSPauseResume.Click += (s, e) =>
+            // Voice selection
+            cmbVoice.SelectedIndexChanged += (s, e) =>
             {
-                if (_ttsService.State == SynthesisState.Speaking)
-                {
-                    _ttsService.Pause();
-                }
-                else if (_ttsService.State == SynthesisState.Paused)
-                {
-                    _ttsService.Resume();
-                }
+                if (cmbVoice.SelectedItem != null)
+                    _tts.SetVoice(cmbVoice.SelectedItem.ToString());
             };
 
-            btnTTSStop.Click += (s, e) => _ttsService.Stop();
+            // STT buttons
+            btnStartListen.Click += BtnStartListen_Click;
+            btnStopListen.Click += BtnStopListen_Click;
 
-            btnTTSClear.Click += (s, e) =>
-            {
-                txtTTSInput.Clear();
-                txtTTSInput.Focus();
-            };
+            // Save history
+            btnSaveHistory.Click += BtnSaveHistory_Click;
 
-            // Hız ve Ses Seviyesi Slider'ları (Bonus)
-            trackSpeed.ValueChanged += (s, e) =>
-            {
-                _ttsService.Rate = trackSpeed.Value;
-                lblSpeedValue.Text = trackSpeed.Value == 0 ? "Normal" : (trackSpeed.Value > 0 ? $"+{trackSpeed.Value}" : $"{trackSpeed.Value}");
-            };
-
-            trackVolume.ValueChanged += (s, e) =>
-            {
-                _ttsService.Volume = trackVolume.Value;
-                lblVolumeValue.Text = $"%{trackVolume.Value}";
-            };
-
-            cmbVoices.SelectedIndexChanged += (s, e) =>
-            {
-                if (cmbVoices.SelectedItem != null)
-                {
-                    _ttsService.SelectVoice(cmbVoices.SelectedItem.ToString()!);
-                }
-            };
-
-            // STT Butonları
-            btnSTTStart.Click += (s, e) => _sttService.StartListening();
-            btnSTTStop.Click += (s, e) => _sttService.StopListening();
-
-            btnSTTClear.Click += (s, e) =>
-            {
-                txtSTTResult.Clear();
-                lstRecognitionHistory.Items.Clear();
-            };
-
-            // Tanıma Metnini Dosyaya Kaydetme (Bonus)
-            btnSaveTranscript.Click += BtnSaveTranscript_Click;
-
-            // Form Kapanırken Kaynak Yönetimi
+            // Form closing
             this.FormClosing += (s, e) =>
             {
-                _ttsService.Dispose();
-                _sttService.Dispose();
+                _tts?.Dispose();
+                _stt?.Dispose();
             };
         }
 
-        private void BtnSaveTranscript_Click(object? sender, EventArgs e)
+        // ==================== TTS ====================
+
+        private void BtnSpeak_Click(object sender, EventArgs e)
         {
-            if (string.IsNullOrWhiteSpace(txtSTTResult.Text) && lstRecognitionHistory.Items.Count == 0)
+            if (string.IsNullOrWhiteSpace(txtInput.Text))
             {
-                MessageBox.Show("Kaydedilecek herhangi bir konuşma metni bulunmuyor!", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("Lütfen seslendirilecek metni girin.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
-            using (var sfd = new SaveFileDialog())
-            {
-                sfd.Title = "Konuşma Metnini Kaydet";
-                sfd.Filter = "Metin Dosyaları (*.txt)|*.txt|Tüm Dosyalar (*.*)|*.*";
-                sfd.FileName = $"KonusmaMetni_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+            _isPaused = false;
+            _tts.SpeakAsync(txtInput.Text);
 
-                if (sfd.ShowDialog() == DialogResult.OK)
-                {
-                    try
-                    {
-                        using (var writer = new StreamWriter(sfd.FileName, false, System.Text.Encoding.UTF8))
-                        {
-                            writer.WriteLine("=================================================================");
-                            writer.WriteLine("         YMH219 SPEECH-TO-TEXT KONUŞMA METNİ RAPORU             ");
-                            writer.WriteLine("=================================================================");
-                            writer.WriteLine($"Tarih / Saat : {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-                            writer.WriteLine("-----------------------------------------------------------------");
-                            writer.WriteLine("TAM METİN ÇIKTISI:");
-                            writer.WriteLine(txtSTTResult.Text);
-                            writer.WriteLine("-----------------------------------------------------------------");
-                            writer.WriteLine("ZAMAN DAMGALI TANIMA GEÇMİŞİ:");
-                            foreach (var item in lstRecognitionHistory.Items)
-                            {
-                                writer.WriteLine(item?.ToString());
-                            }
-                            writer.WriteLine("=================================================================");
-                        }
-                        MessageBox.Show("Konuşma metni başarıyla kaydedildi!", "Başarılı", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show($"Dosya yazma hatası: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-                }
-            }
+            btnSpeak.Enabled = false;
+            btnPause.Enabled = true;
+            btnStop.Enabled = true;
+            btnPause.Text = "⏸ Duraklat";
         }
 
-        private void SafeInvoke(Action action)
+        private void BtnPause_Click(object sender, EventArgs e)
         {
-            if (this.IsDisposed || !this.IsHandleCreated) return;
-
-            if (this.InvokeRequired)
+            if (_isPaused)
             {
-                this.BeginInvoke(action);
+                _tts.Resume();
+                _isPaused = false;
+                btnPause.Text = "⏸ Duraklat";
+                UpdateTTSStatus("Konuşuyor");
             }
             else
             {
-                action();
+                _tts.Pause();
+                _isPaused = true;
+                btnPause.Text = "▶ Devam Et";
+                UpdateTTSStatus("Duraklatıldı");
             }
         }
 
-        #endregion
+        private void BtnStop_Click(object sender, EventArgs e)
+        {
+            _tts.Stop();
+            _isPaused = false;
+            btnSpeak.Enabled = true;
+            btnPause.Enabled = false;
+            btnStop.Enabled = false;
+            btnPause.Text = "⏸ Duraklat";
+            UpdateTTSStatus("Hazır");
+        }
+
+        private void UpdateTTSStatus(string state)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action(() => UpdateTTSStatus(state)));
+                return;
+            }
+
+            switch (state)
+            {
+                case "Konuşuyor":
+                    lblTTSStatus.Text = "⬤ Konuşuyor...";
+                    lblTTSStatus.ForeColor = System.Drawing.Color.Blue;
+                    break;
+                case "Duraklatıldı":
+                    lblTTSStatus.Text = "⏸ Duraklatıldı";
+                    lblTTSStatus.ForeColor = System.Drawing.Color.Orange;
+                    break;
+                case "Tamamlandı":
+                    lblTTSStatus.Text = "✓ Tamamlandı";
+                    lblTTSStatus.ForeColor = System.Drawing.Color.Green;
+                    btnSpeak.Enabled = true;
+                    btnPause.Enabled = false;
+                    btnStop.Enabled = false;
+                    break;
+                default:
+                    lblTTSStatus.Text = "⬤ Hazır";
+                    lblTTSStatus.ForeColor = System.Drawing.Color.Green;
+                    break;
+            }
+        }
+
+        // ==================== STT ====================
+
+        private void BtnStartListen_Click(object sender, EventArgs e)
+        {
+            lblLiveText.Text = "🔈 Algılanan: (dinleniyor...)";
+            _stt.StartListening();
+            btnStartListen.Enabled = false;
+            btnStopListen.Enabled = true;
+        }
+
+        private void BtnStopListen_Click(object sender, EventArgs e)
+        {
+            _stt.StopListening();
+            lblLiveText.Text = "🔈 Algılanan: —";
+            btnStartListen.Enabled = true;
+            btnStopListen.Enabled = false;
+        }
+
+        private void OnSpeechRecognized(RecognitionHistoryModel model)
+        {
+            string entry = $"[{model.Timestamp:HH:mm:ss}] ({model.Confidence:P0}) {model.RecognizedText}";
+            lstHistory.Items.Insert(0, entry);
+        }
+
+        private void UpdateSTTStatus(string state)
+        {
+            switch (state)
+            {
+                case "Dinleniyor":
+                    lblSTTStatus.Text = "🎤 Dinleniyor...";
+                    lblSTTStatus.ForeColor = System.Drawing.Color.Blue;
+                    break;
+                case "Durduruldu":
+                    lblSTTStatus.Text = "⬤ Hazır";
+                    lblSTTStatus.ForeColor = System.Drawing.Color.Green;
+                    break;
+                default:
+                    lblSTTStatus.Text = "⬤ Hazır";
+                    lblSTTStatus.ForeColor = System.Drawing.Color.Green;
+                    break;
+            }
+        }
+
+        private void BtnSaveHistory_Click(object sender, EventArgs e)
+        {
+            if (lstHistory.Items.Count == 0)
+            {
+                MessageBox.Show("Kaydedilecek tanıma geçmişi yok.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using (var dlg = new SaveFileDialog())
+            {
+                dlg.Filter = "Metin Dosyası (*.txt)|*.txt";
+                dlg.FileName = $"konusma_tanima_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+                dlg.Title = "Tanıma Geçmişini Kaydet";
+
+                if (dlg.ShowDialog() == DialogResult.OK)
+                {
+                    using (var writer = new StreamWriter(dlg.FileName, false, System.Text.Encoding.UTF8))
+                    {
+                        writer.WriteLine($"YMH219 SpeechApp - Konuşma Tanıma Geçmişi");
+                        writer.WriteLine($"Tarih: {DateTime.Now:dd.MM.yyyy HH:mm:ss}");
+                        writer.WriteLine($"Öğrenci: Meryem Melek Şimşek | 250541017");
+                        writer.WriteLine(new string('-', 50));
+                        foreach (var item in lstHistory.Items)
+                            writer.WriteLine(item.ToString());
+                    }
+                    MessageBox.Show($"Geçmiş kaydedildi:\n{dlg.FileName}", "Başarılı", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            }
+        }
     }
 }
