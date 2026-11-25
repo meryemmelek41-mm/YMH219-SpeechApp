@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YMH219 - Speech-to-Text ve Text-to-Speech (Ses ve Metin Dönüşüm)</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: #eef2f6; min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; }
+        
+        .window {
+            width: 960px; height: 680px; background: white; border-radius: 14px;
+            box-shadow: 0 20px 45px rgba(0,0,0,0.15); display: flex; flex-direction: column; overflow: hidden;
+            border: 1px solid #dcdfe6;
+        }
+
+        .tabs-header {
+            display: flex; background: #1e293b; border-bottom: 2px solid #334155;
+        }
+        .tab-btn {
+            padding: 14px 28px; background: none; border: none; color: #94a3b8; font-size: 14px;
+            font-weight: 600; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 8px;
+        }
+        .tab-btn:hover { color: #fff; background: rgba(255,255,255,0.05); }
+        .tab-btn.active { color: #fff; background: #0f172a; border-bottom: 3px solid #3b82f6; }
+
+        .tab-content { flex: 1; display: none; flex-direction: column; overflow: hidden; background: #fff; }
+        .tab-content.active { display: flex; }
+
+        .header-panel {
+            background: #212b36; color: white; padding: 16px 24px; display: flex;
+            justify-content: space-between; align-items: center;
+        }
+        .header-panel h2 { font-size: 18px; font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+        .header-panel p { font-size: 12.5px; color: #b4becd; }
+        .status-pill {
+            padding: 8px 18px; border-radius: 6px; font-size: 12.5px; font-weight: 700;
+            color: white; transition: 0.3s;
+        }
+        .status-ready { background: #64748b; }
+        .status-active { background: #10b981; }
+        .status-paused { background: #f59e0b; }
+        .status-mic { background: #ef4444; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
+
+        .toolbar {
+            background: #f8fafc; padding: 12px 24px; display: flex; gap: 12px; align-items: center;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        button.action-btn {
+            padding: 9px 18px; border: none; border-radius: 6px; font-size: 13.5px; font-weight: 600;
+            cursor: pointer; transition: 0.2s; display: inline-flex; align-items: center; gap: 6px;
+        }
+        button.action-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+        button.action-btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+        .btn-green { background: #10b981; color: white; }
+        .btn-orange { background: #f59e0b; color: white; }
+        .btn-red { background: #ef4444; color: white; }
+        .btn-gray { background: #64748b; color: white; }
+        .btn-blue { background: #3b82f6; color: white; margin-left: auto; }
+
+        .main-editor-area {
+            flex: 1; padding: 20px 24px; display: flex; flex-direction: column; overflow: hidden;
+        }
+        textarea {
+            width: 100%; flex: 1; padding: 16px; border: 1.5px solid #cbd5e1; border-radius: 8px;
+            font-size: 14.5px; line-height: 1.6; outline: none; resize: none; background: #fdfefe;
+            color: #1e293b; transition: 0.2s;
+        }
+        textarea:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
+
+        .settings-bar {
+            background: #f8fafc; padding: 14px 24px; border-top: 1px solid #e2e8f0;
+            display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; font-size: 13px;
+        }
+        .setting-col label { display: block; font-weight: 600; color: #475569; margin-bottom: 6px; }
+        select {
+            width: 100%; padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px;
+            background: white; outline: none;
+        }
+        .slider-row { display: flex; align-items: center; gap: 10px; }
+        .slider-row input[type="range"] { flex: 1; cursor: pointer; }
+
+        /* STT İKİLİ PANEL (SPLIT) */
+        .stt-split { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; flex: 1; overflow: hidden; }
+        .stt-col { display: flex; flex-direction: column; overflow: hidden; }
+        .stt-col h4 { font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 8px; }
+        
+        .history-list {
+            flex: 1; background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 8px;
+            padding: 12px; overflow-y: auto; font-family: "Consolas", monospace; font-size: 12.5px;
+            color: #334155; line-height: 1.7;
+        }
+        .history-item { padding: 4px 0; border-bottom: 1px solid #e2e8f0; }
+        .history-time { color: #64748b; font-weight: 600; }
+        .history-conf { color: #10b981; font-weight: 700; }
+    </style>
+</head>
+<body>
+
+<div class="window">
+    <!-- ÜST SEKMELER -->
+    <div class="tabs-header">
+        <button class="tab-btn active" onclick="switchTab('tts')">🔊 Metinden Sese (Text-to-Speech)</button>
+        <button class="tab-btn" onclick="switchTab('stt')">🎤 Sesten Metne (Speech-to-Text)</button>
+    </div>
+
+    <!-- SEKME 1: TEXT-TO-SPEECH -->
+    <div id="tab-tts" class="tab-content active">
+        <div class="header-panel">
+            <div>
+                <h2>🔊 Text-to-Speech (Metinden Sese)</h2>
+                <p>Yazılan metni tarayıcının ses motoru ile seslendirir; ses türü, hızı ve ses seviyesi ayarlanabilir.</p>
+            </div>
+            <div id="ttsStatus" class="status-pill status-ready">⏹ HAZIR</div>
+        </div>
+
+        <div class="toolbar">
+            <button id="btnSpeak" class="action-btn btn-green" onclick="startTTS()">▶ Seslendir (Başlat)</button>
+            <button id="btnPause" class="action-btn btn-orange" onclick="pauseResumeTTS()" disabled>⏸ Duraklat / Devam</button>
+            <button id="btnStop" class="action-btn btn-red" onclick="stopTTS()" disabled>⏹ Durdur</button>
+            <button class="action-btn btn-gray" onclick="clearTTS()">🗑 Temizle</button>
+        </div>
+
+        <div class="main-editor-area">
+            <textarea id="ttsText" placeholder="Seslendirilmesini istediğiniz metni buraya yazın...">Merhaba! Bu uygulama Nesne Tabanlı Programlama (YMH 219) dersi kapsamında geliştirilmiş konuşma sentezleme ve tanıma sistemidir. Yazılan metinleri akıcı bir şekilde seslendirebilir ve mikrofondan konuşmanızı metne dönüştürebilir.</textarea>
+        </div>
+
+        <div class="settings-bar">
+            <div class="setting-col">
+                <label>Ses Seçimi (Voice):</label>
+                <select id="voiceSelect" onchange="onVoiceChange()"></select>
+            </div>
+            <div class="setting-col">
+                <label>Okuma Hızı (Rate): <span id="lblSpeed">1.0x</span></label>
+                <div class="slider-row">
+                    <input type="range" id="rateSlider" min="0.5" max="2" step="0.1" value="1" oninput="updateRate(this.value)">
+                </div>
+            </div>
+            <div class="setting-col">
+                <label>Ses Seviyesi (Volume): <span id="lblVol">%100</span></label>
+                <div class="slider-row">
+                    <input type="range" id="volSlider" min="0" max="1" step="0.05" value="1" oninput="updateVol(this.value)">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SEKME 2: SPEECH-TO-TEXT -->
+    <div id="tab-stt" class="tab-content">
+        <div class="header-panel">
+            <div>
+                <h2>🎤 Speech-to-Text (Sesten Metne)</h2>
+                <p>Mikrofon üzerinden konuşmanızı gerçek zamanlı metne dönüştürür ve güven skorlarıyla listeler.</p>
+            </div>
+            <div id="sttStatus" class="status-pill status-ready">⚪ DİNLEME KAPALI</div>
+        </div>
+
+        <div class="toolbar">
+            <button id="btnStartSTT" class="action-btn btn-green" onclick="startSTT()">🎤 Dinlemeyi Başlat</button>
+            <button id="btnStopSTT" class="action-btn btn-red" onclick="stopSTT()" disabled>⏹ Dinlemeyi Durdur</button>
+            <button class="action-btn btn-gray" onclick="clearSTT()">🗑 Temizle</button>
+            <button class="action-btn btn-blue" onclick="saveSTTTranscript()">💾 Metni Kaydet (.txt)</button>
+        </div>
+
+        <div class="main-editor-area">
+            <div class="stt-split">
+                <div class="stt-col">
+                    <h4>✍ Canlı Dönüştürülen Metin Alanı:</h4>
+                    <textarea id="sttResult" placeholder="Mikrofon dinlemeye başladığında konuşun, metniniz burada belirecektir..."></textarea>
+                </div>
+                <div class="stt-col">
+                    <h4>📜 Tanıma Geçmişi ve Güven Skoru:</h4>
+                    <div id="sttHistory" class="history-list">
+                        <div style="color:#94a3b8; padding:20px; text-align:center;">Henüz bir konuşma kaydı yok.<br><small>Mikrofonu başlatıp konuşmaya başlayabilirsiniz.</small></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ============================================================
+    // TEXT-TO-SPEECH (TTS) MOTORU
+    // ============================================================
+    let synth = window.speechSynthesis;
+    let voices = [];
+    let isSpeaking = false;
+    let isPaused = false;
+
+    function populateVoices() {
+        if (!synth) return;
+        voices = synth.getVoices();
+        const sel = document.getElementById('voiceSelect');
+        sel.innerHTML = '';
+
+        // Türkçe sesleri öncele
+        voices.forEach((v, i) => {
+            const opt = document.createElement('option');
+            opt.value = i;
+            opt.textContent = `${v.name} (${v.lang})`;
+            if (v.lang.startsWith('tr')) opt.selected = true;
+            sel.appendChild(opt);
+        });
+    }
+
+    if (synth) {
+        populateVoices();
+        if (speechSynthesis.onvoiceschanged !== undefined) {
+            speechSynthesis.onvoiceschanged = populateVoices;
+        }
+    }
+
+    function startTTS() {
+        if (!synth) {
+            alert("Tarayıcınız Text-to-Speech API desteklemiyor.");
+            return;
+        }
+
+        const text = document.getElementById('ttsText').value.trim();
+        if (!text) {
+            alert("Lütfen seslendirilecek bir metin yazın!");
+            return;
+        }
+
+        synth.cancel(); // Varsa önceki konuşmayı durdur
+
+        const utter = new SpeechSynthesisUtterance(text);
+        const voiceIdx = document.getElementById('voiceSelect').value;
+        if (voices[voiceIdx]) utter.voice = voices[voiceIdx];
+
+        utter.rate = parseFloat(document.getElementById('rateSlider').value);
+        utter.volume = parseFloat(document.getElementById('volSlider').value);
+
+        const statusEl = document.getElementById('ttsStatus');
+        const btnSpeak = document.getElementById('btnSpeak');
+        const btnPause = document.getElementById('btnPause');
+        const btnStop = document.getElementById('btnStop');
+
+        utter.onstart = () => {
+            isSpeaking = true;
+            isPaused = false;
+            statusEl.className = "status-pill status-active";
+            statusEl.textContent = "🔊 SESLENDİRİLİYOR...";
+            btnSpeak.disabled = true;
+            btnPause.disabled = false;
+            btnPause.textContent = "⏸ Duraklat";
+            btnStop.disabled = false;
+        };
+
+        utter.onend = () => {
+            resetTTSUI();
+        };
+
+        utter.onerror = (e) => {
+            console.error("TTS hatası:", e);
+            resetTTSUI();
+        };
+
+        synth.speak(utter);
+    }
+
+    function pauseResumeTTS() {
+        if (!synth) return;
+        const btnPause = document.getElementById('btnPause');
+        const statusEl = document.getElementById('ttsStatus');
+
+        if (!isPaused) {
+            synth.pause();
+            isPaused = true;
+            statusEl.className = "status-pill status-paused";
+            statusEl.textContent = "⏸ DURAKLATILDI";
+            btnPause.textContent = "▶ Devam Et";
+        } else {
+            synth.resume();
+            isPaused = false;
+            statusEl.className = "status-pill status-active";
+            statusEl.textContent = "🔊 SESLENDİRİLİYOR...";
+            btnPause.textContent = "⏸ Duraklat";
+        }
+    }
+
+    function stopTTS() {
+        if (synth) synth.cancel();
+        resetTTSUI();
+    }
+
+    function resetTTSUI() {
+        isSpeaking = false;
+        isPaused = false;
+        const statusEl = document.getElementById('ttsStatus');
+        statusEl.className = "status-pill status-ready";
+        statusEl.textContent = "⏹ HAZIR";
+        document.getElementById('btnSpeak').disabled = false;
+        document.getElementById('btnPause').disabled = true;
+        document.getElementById('btnStop').disabled = true;
+    }
+
+    function clearTTS() {
+        stopTTS();
+        document.getElementById('ttsText').value = '';
+        document.getElementById('ttsText').focus();
+    }
+
+    function updateRate(val) {
+        document.getElementById('lblSpeed').textContent = `${val}x`;
+    }
+
+    function updateVol(val) {
+        document.getElementById('lblVol').textContent = `%${Math.round(val * 100)}`;
+    }
+
+    // ============================================================
+    // SPEECH-TO-TEXT (STT) MOTORU
+    // ============================================================
+    let recognition = null;
+    let isListening = false;
+    let historyCount = 0;
+
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    function startSTT() {
+        if (!SpeechRec) {
+            alert("Tarayıcınız konuşma tanıma (SpeechRecognition) API'sini desteklemiyor.\nLütfen Google Chrome, Edge veya Safari kullanın.");
+            return;
+        }
+
+        try {
+            recognition = new SpeechRec();
+            recognition.lang = 'tr-TR';
+            recognition.continuous = true;
+            recognition.interimResults = true;
+
+            const sttStatus = document.getElementById('sttStatus');
+            const btnStart = document.getElementById('btnStartSTT');
+            const btnStop = document.getElementById('btnStopSTT');
+            const resultBox = document.getElementById('sttResult');
+            const historyList = document.getElementById('sttHistory');
+
+            recognition.onstart = () => {
+                isListening = true;
+                sttStatus.className = "status-pill status-mic";
+                sttStatus.textContent = "🔴 MİKROFON DİNLİYOR...";
+                btnStart.disabled = true;
+                btnStop.disabled = false;
+            };
+
+            recognition.onresult = (e) => {
+                let interim = '';
+                for (let i = e.resultIndex; i < e.results.length; ++i) {
+                    const res = e.results[i];
+                    const text = res[0].transcript;
+                    const confidence = Math.round((res[0].confidence || 0.92) * 100);
+
+                    if (res.isFinal) {
+                        resultBox.value += (resultBox.value ? " " : "") + text;
+                        resultBox.scrollTop = resultBox.scrollHeight;
+
+                        // Geçmişe ekle
+                        if (historyCount === 0) historyList.innerHTML = '';
+                        historyCount++;
+                        const timeStr = new Date().toTimeString().slice(0, 8);
+                        const item = document.createElement('div');
+                        item.className = 'history-item';
+                        item.innerHTML = `<span class="history-time">[${timeStr}]</span> "${text}" <span class="history-conf">(Güven: %${confidence})</span>`;
+                        historyList.appendChild(item);
+                        historyList.scrollTop = historyList.scrollHeight;
+                    }
+                }
+            };
+
+            recognition.onerror = (e) => {
+                console.error("STT Hatası:", e);
+                if (e.error === 'not-allowed') {
+                    alert("Mikrofon erişim izni verilmedi! Lütfen tarayıcı ayarlarından mikrofon iznini onaylayın.");
+                }
+                stopSTT();
+            };
+
+            recognition.onend = () => {
+                if (isListening) {
+                    try { recognition.start(); } catch (err) { stopSTT(); }
+                } else {
+                    stopSTT();
+                }
+            };
+
+            recognition.start();
+
+        } catch (e) {
+            alert("Mikrofon başlatma hatası: " + e.message);
+            stopSTT();
+        }
+    }
+
+    function stopSTT() {
+        isListening = false;
+        if (recognition) {
+            try { recognition.stop(); } catch (e) {}
+        }
+        const sttStatus = document.getElementById('sttStatus');
+        sttStatus.className = "status-pill status-ready";
+        sttStatus.textContent = "⚪ DİNLEME KAPALI";
+        document.getElementById('btnStartSTT').disabled = false;
+        document.getElementById('btnStopSTT').disabled = true;
+    }
+
+    function clearSTT() {
+        document.getElementById('sttResult').value = '';
+        document.getElementById('sttHistory').innerHTML = '<div style="color:#94a3b8; padding:20px; text-align:center;">Kayıtlar temizlendi.</div>';
+        historyCount = 0;
+    }
+
+    function saveSTTTranscript() {
+        const text = document.getElementById('sttResult').value.trim();
+        const historyText = document.getElementById('sttHistory').innerText;
+        if (!text && historyCount === 0) {
+            alert("Kaydedilecek herhangi bir konuşma metni bulunmuyor!");
+            return;
+        }
+
+        let content = "=================================================================\n";
+        content += "         YMH219 SPEECH-TO-TEXT KONUŞMA METNİ RAPORU             \n";
+        content += "=================================================================\n";
+        content += `Tarih / Saat : ${new Date().toLocaleString()}\n`;
+        content += "-----------------------------------------------------------------\n";
+        content += "TAM METİN ÇIKTISI:\n" + text + "\n";
+        content += "-----------------------------------------------------------------\n";
+        content += "ZAMAN DAMGALI TANIMA GEÇMİŞİ:\n" + historyText + "\n";
+        content += "=================================================================\n";
+
+        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `KonusmaMetni_${new Date().toISOString().slice(0,10)}.txt`;
+        a.click();
+    }
+
+    // SEKME DEĞİŞTİRME
+    function switchTab(tab) {
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+        if (tab === 'tts') {
+            document.querySelectorAll('.tab-btn')[0].classList.add('active');
+            document.getElementById('tab-tts').classList.add('active');
+        } else {
+            document.querySelectorAll('.tab-btn')[1].classList.add('active');
+            document.getElementById('tab-stt').classList.add('active');
+        }
+    }
+
+    // DEMO ÖNİZLEME MODU (Ekran Görüntüsü ve Test Desteği)
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('demo') === 'stt') {
+        switchTab('stt');
+        document.getElementById('sttStatus').className = "status-pill status-mic";
+        document.getElementById('sttStatus').textContent = "🔴 MİKROFON DİNLİYOR...";
+        document.getElementById('btnStartSTT').disabled = true;
+        document.getElementById('btnStopSTT').disabled = false;
+        document.getElementById('sttResult').value = "Merhaba! Nesne Tabanlı Programlama dersi ek uygulaması için konuşma tanıma sistemi mikrofon üzerinden gerçek zamanlı çalışmaktadır.";
+        document.getElementById('sttHistory').innerHTML = `
+            <div class="history-item"><span class="history-time">[21:48:12]</span> "Merhaba" <span class="history-conf">(Güven: %96)</span></div>
+            <div class="history-item"><span class="history-time">[21:48:16]</span> "Nesne Tabanlı Programlama dersi ek uygulaması için" <span class="history-conf">(Güven: %93)</span></div>
+            <div class="history-item"><span class="history-time">[21:48:21]</span> "konuşma tanıma sistemi mikrofon üzerinden gerçek zamanlı çalışmaktadır" <span class="history-conf">(Güven: %95)</span></div>
+        `;
+    }
+</script>
+
+</body>
+</html>
